@@ -20,7 +20,7 @@ struct ip_log {
     __u64 timestamp;
 };
 
-void print_info(){
+void print_info() {
     printf("[1] update ip   [2] print log\n");
     printf("enter 'u' or 'U' you can update ip maps\n");
     printf("enter 'l' or 'L' you can print ip log\n");

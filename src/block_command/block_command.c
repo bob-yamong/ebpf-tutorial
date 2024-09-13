@@ -4,7 +4,7 @@
 #include <signal.h>
 #include <string.h>
 #include <bpf/libbpf.h>
-#include "block_execve.skel.h"
+#include "block_command.skel.h"
 
 static volatile bool exiting = false;
 
@@ -30,7 +30,7 @@ void print_help() {
 }
 
 int main(int argc, char **argv) {
-    struct block_execve_bpf *skel;
+    struct block_command_bpf *skel;
     struct ring_buffer *rb = NULL;
     int err;
     char command[512];
@@ -41,14 +41,14 @@ int main(int argc, char **argv) {
     signal(SIGTERM, handle_signal);
 
     // eBPF 스켈레톤 로드 및 검증
-    skel = block_execve_bpf__open_and_load();
+    skel = block_command_bpf__open_and_load();
     if (!skel) {
         fprintf(stderr, "Failed to open and load eBPF skeleton\n");
         return 1;
     }
 
     // eBPF 프로그램 어태치
-    err = block_execve_bpf__attach(skel);
+    err = block_command_bpf__attach(skel);
     if (err) {
         fprintf(stderr, "Failed to attach eBPF program\n");
         goto cleanup;
@@ -152,6 +152,6 @@ int main(int argc, char **argv) {
 
 cleanup:
     ring_buffer__free(rb);
-    block_execve_bpf__destroy(skel);
+    block_command_bpf__destroy(skel);
     return err < 0 ? -err : 0;
 }

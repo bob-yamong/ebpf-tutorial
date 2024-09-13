@@ -40,6 +40,7 @@ static __always_inline int copy_path(char *dest, const struct path *path, int bu
     struct dentry *dentry = BPF_CORE_READ(path, dentry);
     struct vfsmount *mnt = BPF_CORE_READ(path, mnt);
     struct qstr d_name;
+    const unsigned char *name;
     char slash = '/';
     int pos = buf_size - 1;  // 문자열 끝에 null 문자 위치
     dest[pos] = '\0';
@@ -47,19 +48,20 @@ static __always_inline int copy_path(char *dest, const struct path *path, int bu
 
 #pragma unroll
     for (int i = 0; i < 64; i++) {
-        if (dentry == BPF_CORE_READ(mnt, mnt_root)) {
+        struct dentry *mnt_root = BPF_CORE_READ(mnt, mnt_root);
+        if (dentry == mnt_root) {
             break;
         }
         d_name = BPF_CORE_READ(dentry, d_name);
         int len = d_name.len;
-        const char *name = d_name.name;
+        name = d_name.name;
 
         if (pos < len + 1) {
             return -1;  // 버퍼 오버플로우 방지
         }
         // 이름 복사
         pos -= len;
-        bpf_probe_read_kernel_str(&dest[pos], len + 1, name);
+        bpf_probe_read_kernel(&dest[pos], len, name);
         // 슬래시 추가
         pos--;
         dest[pos] = slash;
@@ -78,12 +80,12 @@ static __always_inline int get_parent_info(struct task_struct *task, char *comm,
     struct task_struct *parent_task;
     parent_task = BPF_CORE_READ(task, real_parent);
     *ppid = BPF_CORE_READ(parent_task, tgid);
-    return bpf_probe_read_kernel_str(comm, TASK_COMM_LEN, BPF_CORE_READ(parent_task, comm));
+    return bpf_core_read_str(comm, TASK_COMM_LEN, BPF_CORE_READ(parent_task, comm));
 }
 
 // LSM 훅: 프로세스 실행 전에 호출됨
 SEC("lsm/bprm_check_security")
-int BPF_PROG(block_execve, struct linux_binprm *bprm) {
+int block_execve(struct linux_binprm *bprm) {
     struct event *e;
     int ret;
     struct task_struct *task;
@@ -93,11 +95,13 @@ int BPF_PROG(block_execve, struct linux_binprm *bprm) {
     char filepath[256];
 
     // 실행 파일의 전체 경로 가져오기
-    struct file *file = BPF_CORE_READ(bprm, file);
+    struct file *file = NULL;
+    BPF_CORE_READ_INTO(&file, bprm, file);
     if (!file) {
         return 0;
     }
-    struct path f_path = BPF_CORE_READ(file, f_path);
+    struct path f_path;
+    BPF_CORE_READ_INTO(&f_path, file, f_path);
     ret = copy_path(filepath, &f_path, sizeof(filepath));
     if (ret < 0) {
         return 0;  // 경로를 가져오지 못하면 차단하지 않음

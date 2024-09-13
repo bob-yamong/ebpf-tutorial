@@ -71,7 +71,12 @@ static __always_inline int copy_path(char *dest, const struct path *path, int bu
 
     // 최종 경로 복사
     int copied = buf_size - pos - 1;
-    __builtin_memmove(dest, &dest[pos], copied);
+#pragma unroll
+    for (int i = 0; i < 256; i++) {
+        if (i >= copied)
+            break;
+        dest[i] = dest[pos + i];
+    }
     return 0;
 }
 

@@ -78,9 +78,19 @@ static __always_inline int copy_path(char *dest, const struct path *path, int bu
 // 부모 프로세스의 이름과 PID를 가져오는 함수
 static __always_inline int get_parent_info(struct task_struct *task, char *comm, __u32 *ppid) {
     struct task_struct *parent_task;
+    const char *parent_comm_ptr;
+    int ret;
+
     parent_task = BPF_CORE_READ(task, real_parent);
     *ppid = BPF_CORE_READ(parent_task, tgid);
-    return bpf_core_read_str(comm, TASK_COMM_LEN, BPF_CORE_READ(parent_task, comm));
+
+    // 부모 프로세스의 comm 필드를 먼저 읽어옵니다.
+    parent_comm_ptr = BPF_CORE_READ(parent_task, comm);
+
+    // 읽어온 포인터를 사용하여 문자열을 복사합니다.
+    ret = bpf_probe_read_kernel_str(comm, TASK_COMM_LEN, parent_comm_ptr);
+
+    return ret;
 }
 
 // LSM 훅: 프로세스 실행 전에 호출됨

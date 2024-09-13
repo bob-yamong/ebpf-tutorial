@@ -18,7 +18,7 @@ VMLINUX := ../../vmlinux/$(ARCH)/vmlinux.h
 # libbpf to avoid dependency on system-wide headers, which could be missing or
 # outdated
 INCLUDES := -I$(OUTPUT) -I../../libbpf/include/uapi -I$(dir $(VMLINUX))
-CFLAGS := -g -Wall
+CFLAGS := -g -Wall -fno-stack-protector
 BPF_CFLAGS := -O2 -fno-stack-protector
 ALL_LDFLAGS := $(LDFLAGS) $(EXTRA_LDFLAGS)
 

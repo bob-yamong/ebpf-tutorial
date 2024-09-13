@@ -16,7 +16,7 @@
 
 // Define the 'event' structure
 struct event {
-    char filename[256];
+    char filename[PATH_MAX];
     char isBlocked;
 };
 
@@ -33,7 +33,7 @@ static void sig_handler(int sig) {
 
 static int handle_event(void *ctx, void *data, size_t data_sz) {
     struct event *e = (struct event *)data;
-    printf("File accessed %s: %s\n", e->isBlocked? "Block": "Allow",e->filename);
+    printf("File accessed %s:, %s\n", e->isBlocked? "Block" : "Allow", e->filename);
     return 0;
 }
 

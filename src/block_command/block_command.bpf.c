@@ -1,5 +1,3 @@
-// block_command.bpf.c
-
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
@@ -37,51 +35,6 @@ struct {
     __uint(max_entries, 1024);
 } blocked_parents SEC(".maps");
 
-// 커널 문자열을 사용자 공간 버퍼로 복사하는 함수
-static __always_inline int copy_path(char *dest, const struct path *path, int buf_size) {
-    struct dentry *dentry = BPF_CORE_READ(path, dentry);
-    struct vfsmount *mnt = BPF_CORE_READ(path, mnt);
-    struct qstr d_name;
-    const unsigned char *name;
-    char slash = '/';
-    int pos = buf_size - 1;  // 문자열 끝에 null 문자 위치
-    dest[pos] = '\0';
-    pos--;
-
-#pragma unroll
-    for (int i = 0; i < 64; i++) {
-        struct dentry *mnt_root = BPF_CORE_READ(mnt, mnt_root);
-        if (dentry == mnt_root) {
-            break;
-        }
-        d_name = BPF_CORE_READ(dentry, d_name);
-        int len = d_name.len;
-        name = d_name.name;
-
-        if (pos < len + 1) {
-            return -1;  // 버퍼 오버플로우 방지
-        }
-        // 이름 복사
-        pos -= len;
-        bpf_probe_read_kernel(&dest[pos], len, name);
-        // 슬래시 추가
-        pos--;
-        dest[pos] = slash;
-        // 상위 디렉토리로 이동
-        dentry = BPF_CORE_READ(dentry, d_parent);
-    }
-
-    // 최종 경로 복사
-    int copied = buf_size - pos - 1;
-#pragma unroll
-    for (int i = 0; i < 256; i++) {
-        if (i >= copied)
-            break;
-        dest[i] = dest[pos + i];
-    }
-    return 0;
-}
-
 // 부모 프로세스의 이름과 PID를 가져오는 함수
 static __always_inline int get_parent_info(struct task_struct *task, char *comm, __u32 *ppid) {
     struct task_struct *parent_task;
@@ -91,10 +44,10 @@ static __always_inline int get_parent_info(struct task_struct *task, char *comm,
     parent_task = BPF_CORE_READ(task, real_parent);
     *ppid = BPF_CORE_READ(parent_task, tgid);
 
-    // 부모 프로세스의 comm 필드를 먼저 읽어옵니다.
+    // 부모 프로세스의 comm 필드를 읽어옴
     parent_comm_ptr = BPF_CORE_READ(parent_task, comm);
 
-    // 읽어온 포인터를 사용하여 문자열을 복사합니다.
+    // 읽어온 포인터를 사용하여 문자열을 복사
     ret = bpf_probe_read_kernel_str(comm, TASK_COMM_LEN, parent_comm_ptr);
 
     return ret;
@@ -111,17 +64,10 @@ int block_execve(struct linux_binprm *bprm) {
     __u32 ppid;
     char filepath[256];
 
-    // 실행 파일의 전체 경로 가져오기
-    struct file *file = NULL;
-    BPF_CORE_READ_INTO(&file, bprm, file);
-    if (!file) {
-        return 0;
-    }
-    struct path f_path;
-    BPF_CORE_READ_INTO(&f_path, file, f_path);
-    ret = copy_path(filepath, &f_path, sizeof(filepath));
-    if (ret < 0) {
-        return 0;  // 경로를 가져오지 못하면 차단하지 않음
+    // bprm->filename에서 실행 파일 이름 가져오기
+    ret = bpf_probe_read_kernel_str(filepath, sizeof(filepath), bprm->filename);
+    if (ret <= 0) {
+        return 0;  // 파일 이름을 가져오지 못하면 차단하지 않음
     }
 
     // 허용된 프로그램인지 확인
@@ -154,7 +100,7 @@ int block_execve(struct linux_binprm *bprm) {
         e->ppid = ppid;
         bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
-        // 실행 파일 경로를 이벤트 구조체에 저장
+        // 실행 파일 이름을 이벤트 구조체에 저장
         bpf_probe_read_kernel_str(e->filename, sizeof(e->filename), filepath);
 
         e->action = 1;  // 차단

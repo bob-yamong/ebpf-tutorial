@@ -49,7 +49,6 @@ int main(int argc, char **argv) {
     struct ring_buffer *rb = NULL;
     int err;
     char command[512];
-    __u8 value = 0;
 
     // 시그널 핸들러 설정
     signal(SIGINT, handle_signal);
@@ -82,7 +81,7 @@ int main(int argc, char **argv) {
     // 이벤트 수신 및 명령 처리 루프
     while (!exiting) {
         // 비차단 방식으로 링 버퍼 폴링
-        err = ring_buffer__poll(rb, 0);
+        err = ring_buffer__poll(rb, 100);
         if (err < 0) {
             fprintf(stderr, "Error polling ring buffer: %d\n", err);
             break;
@@ -108,7 +107,11 @@ int main(int argc, char **argv) {
             }
             char key[256] = {0};
             strncpy(key, path, sizeof(key) - 1);
-            err = bpf_map__update_elem(skel->maps.allowed_programs, key, &value, BPF_ANY);
+            __u8 value = 0;
+            err = bpf_map__update_elem(skel->maps.allowed_programs,
+                                       key, sizeof(key),
+                                       &value, sizeof(value),
+                                       BPF_ANY);
             if (err) {
                 fprintf(stderr, "Failed to add allowed program: %d\n", err);
             } else {
@@ -122,7 +125,9 @@ int main(int argc, char **argv) {
             }
             char key[256] = {0};
             strncpy(key, path, sizeof(key) - 1);
-            err = bpf_map__delete_elem(skel->maps.allowed_programs, key, 0);
+            err = bpf_map__delete_elem(skel->maps.allowed_programs,
+                                       key, sizeof(key),
+                                       0);
             if (err) {
                 fprintf(stderr, "Failed to remove allowed program: %d\n", err);
             } else {
@@ -136,7 +141,11 @@ int main(int argc, char **argv) {
             }
             char key[TASK_COMM_LEN] = {0};
             strncpy(key, name, sizeof(key) - 1);
-            err = bpf_map__update_elem(skel->maps.blocked_parents, key, &value, BPF_ANY);
+            __u8 value = 0;
+            err = bpf_map__update_elem(skel->maps.blocked_parents,
+                                       key, sizeof(key),
+                                       &value, sizeof(value),
+                                       BPF_ANY);
             if (err) {
                 fprintf(stderr, "Failed to add blocked parent: %d\n", err);
             } else {
@@ -150,7 +159,9 @@ int main(int argc, char **argv) {
             }
             char key[TASK_COMM_LEN] = {0};
             strncpy(key, name, sizeof(key) - 1);
-            err = bpf_map__delete_elem(skel->maps.blocked_parents, key, 0);
+            err = bpf_map__delete_elem(skel->maps.blocked_parents,
+                                       key, sizeof(key),
+                                       0);
             if (err) {
                 fprintf(stderr, "Failed to remove blocked parent: %d\n", err);
             } else {

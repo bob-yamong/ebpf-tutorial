@@ -12,14 +12,14 @@
 
 #define MAX_PATH 256
 
-struct syscall_key {
+struct event_key {
     __u32 ns_id;
     __u32 event_id;
+    char argument[256];
 };
 
-struct syscall_policy {
+struct event_policy {
     __u32 action;
-    char argument[256];
 };
 
 int get_namespace_id(int container_pid) {
@@ -143,17 +143,17 @@ int main(int argc, char **argv) {
             if (strcmp(action_str, "allow") == 0) action = 0;
             if (strcmp(action_str, "block") == 0) action = 1;
 
-            struct syscall_key key = {
+            struct event_key key = {
                 .ns_id = ns_id,
                 .event_id = event_id
             };
+            memcpy(key.argument, &ip_addr.s_addr, sizeof(ip_addr.s_addr));
 
-            struct syscall_policy policy = {
+            struct event_policy policy = {
                 .action = action
             };
-            memcpy(policy.argument, &ip_addr.s_addr, sizeof(ip_addr.s_addr));
 
-            err = bpf_map__update_elem(skel->maps.syscall_policy_map, &key, sizeof(key), &policy, sizeof(policy), BPF_ANY);
+            err = bpf_map__update_elem(skel->maps.event_policy_map, &key, sizeof(key), &policy, sizeof(policy), BPF_ANY);
             if (err) {
                 fprintf(stderr, "Failed to update map: %d\n", err);
                 continue;

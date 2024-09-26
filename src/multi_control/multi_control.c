@@ -43,7 +43,6 @@ ContainerRuntime detect_runtime() {
     return RUNTIME_UNKNOWN;
 }
 
-// 하나씩만 나옴
 int get_docker_pid(const char* container_name) {
     char cmd[MAX_CMD_LEN];
     char output[MAX_OUTPUT_LEN];
@@ -65,52 +64,36 @@ int get_docker_pid(const char* container_name) {
     return atoi(output);
 }
 
-// 여러개 가능, 수정 필요
-int get_containerd_pid(const char* container_label) {
+// 여러개 가능, 현재는 name으로 찾지만 label, namespace 구현 필요
+int get_containerd_pid(const char* container_name) {
     char cmd[MAX_CMD_LEN];
     char output[MAX_OUTPUT_LEN];
     FILE *fp;
 
-    snprintf(cmd, sizeof(cmd), "ctr containers list | grep %s | awk '{print $1}'", container_label);
-    fp = popen(cmd, "r");
-    if (fp == NULL) {
-        perror("Failed to run ctr command");
-        return -1;
-    }
-
-    if (fgets(output, sizeof(output), fp) == NULL) {
-        pclose(fp);
-        return -1;
-    }
-    pclose(fp);
-
-    output[strcspn(output, "\n")] = 0;
-
-    snprintf(cmd, sizeof(cmd), "ctr task ls | grep %s | awk '{print $2}'", output);
+    snprintf(cmd, sizeof(cmd), "ctr task ls | awk '$1 == \"%s\" {print $0}' | awk '{print $2}'", container_name);
     fp = popen(cmd, "r");
     if (fp == NULL) {
         perror("Failed to run ctr task info command");
         return -1;
     }
-
-    int pid = -1;
-    if (fgets(output, sizeof(output), fp) != NULL) {  // Skip header
-        if (fgets(output, sizeof(output), fp) != NULL) {
-            sscanf(output, "%*s %d", &pid);
-        }
+    if (fgets(output, sizeof(output), fp) == NULL) {
+        pclose(fp);
+        return -1;
     }
-
     pclose(fp);
-    return pid;
+    output[strcspn(output, "\n")] = 0;
+    printf("%s", output);
+
+    return atoi(output);
 }
 
-// 여러개 가능
+// 여러개 가능, 현재는 name으로 찾지만 label, namespace, pods 구현 필요
 int get_crio_pid(const char* container_name) {
     char cmd[MAX_CMD_LEN];
     char output[MAX_OUTPUT_LEN];
     FILE *fp;
 
-    snprintf(cmd, sizeof(cmd), "crictl ps --name %s -q", container_name);
+    snprintf(cmd, sizeof(cmd), "crictl ps --name %s | grep -E '^%s$' | awk '{print $1}'", container_name);
     fp = popen(cmd, "r");
     if (fp == NULL) {
         perror("Failed to run crictl command");
@@ -146,10 +129,13 @@ int get_container_pid(const char* container_name) {
     
     switch(runtime) {
         case RUNTIME_DOCKER:
+            printf("docker\n");
             return get_docker_pid(container_name);
         case RUNTIME_CONTAINERD:
+            printf("containerd\n");
             return get_containerd_pid(container_name);
         case RUNTIME_CRIO:
+            printf("crio\n");
             return get_crio_pid(container_name);
         default:
             fprintf(stderr, "Unknown or unsupported container runtime\n");

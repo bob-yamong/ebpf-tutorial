@@ -32,14 +32,18 @@ typedef enum {
     RUNTIME_CRIO
 } ContainerRuntime;
 
-ContainerRuntime detect_runtime() {
-    if (access("/var/run/docker.sock1", F_OK) != -1) {
-        return RUNTIME_DOCKER;
-    } else if (access("/run/containerd/containerd.sock1", F_OK) != -1) {
-        return RUNTIME_CONTAINERD;
-    } else if (access("/var/run/crio/crio.sock", F_OK) != -1) {
-        return RUNTIME_CRIO;
+ContainerRuntime get_runtime_from_user() {
+    char input[20];
+    printf("Enter container runtime (docker/containerd/crio): ");
+    if (fgets(input, sizeof(input), stdin) == NULL) {
+        return RUNTIME_UNKNOWN;
     }
+    input[strcspn(input, "\n")] = 0;
+
+    if (strcmp(input, "docker") == 0) return RUNTIME_DOCKER;
+    if (strcmp(input, "containerd") == 0) return RUNTIME_CONTAINERD;
+    if (strcmp(input, "crio") == 0) return RUNTIME_CRIO;
+    
     return RUNTIME_UNKNOWN;
 }
 
@@ -86,7 +90,7 @@ int get_containerd_pid(const char* container_name) {
     return atoi(output);
 }
 
-// 여러개 가능, 현재는 name인데 사실 pod임으로 찾지만 label, namespace 구현 필요
+// 여러개 가능, 현재는 name인데 사실 pod임 추가로 label, namespace 구현 필요
 int get_crio_pid(const char* container_name) {
     char cmd[MAX_CMD_LEN];
     char output[MAX_OUTPUT_LEN];
@@ -110,7 +114,7 @@ int get_crio_pid(const char* container_name) {
 }
 
 int get_container_pid(const char* container_name) {
-    ContainerRuntime runtime = detect_runtime();
+    ContainerRuntime runtime = get_runtime_from_user();
     
     switch(runtime) {
         case RUNTIME_DOCKER:
@@ -120,7 +124,7 @@ int get_container_pid(const char* container_name) {
             printf("containerd\n");
             return get_containerd_pid(container_name);
         case RUNTIME_CRIO:
-            printf("crio\n");
+            printf("cri-o\n");
             return get_crio_pid(container_name);
         default:
             fprintf(stderr, "Unknown or unsupported container runtime\n");
@@ -184,7 +188,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to attach BPF skeleton\n");
         goto cleanup;
     }
-
+    ContainerRuntime runtime = get_runtime_from_user();
     // main loop process from user's input
     while (1) {
         char container_str[256];
@@ -207,9 +211,24 @@ int main(int argc, char **argv) {
         if (strcmp(container_str, "quit") == 0) {
             break;
         }
-
-        // pid = (__u32)atoi(pid_str);
-        pid = get_container_pid(container_str);
+        
+        switch(runtime) {
+            case RUNTIME_DOCKER:
+                printf("docker\n");
+                pid = get_docker_pid(container_str);
+                break;
+            case RUNTIME_CONTAINERD:
+                printf("containerd\n");
+                pid =  get_containerd_pid(container_str);
+                break;
+            case RUNTIME_CRIO:
+                printf("cri-o\n");
+                pid = get_crio_pid(container_str);
+                break;
+            default:
+                fprintf(stderr, "Unknown or unsupported container runtime\n");
+                return -1;
+        }
         ns_id = get_namespace_id(pid);
         
         printf("Enter event (e.g., task_fix_setuid, socket_connect): ");

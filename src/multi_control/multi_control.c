@@ -22,6 +22,141 @@ struct event_policy {
     __u32 action;
 };
 
+#define MAX_CMD_LEN 1024
+#define MAX_OUTPUT_LEN 256
+
+typedef enum {
+    RUNTIME_UNKNOWN,
+    RUNTIME_DOCKER,
+    RUNTIME_CONTAINERD,
+    RUNTIME_CRIO
+} ContainerRuntime;
+
+ContainerRuntime detect_runtime() {
+    if (access("/var/run/docker.sock", F_OK) != -1) {
+        return RUNTIME_DOCKER;
+    } else if (access("/run/containerd/containerd.sock", F_OK) != -1) {
+        return RUNTIME_CONTAINERD;
+    } else if (access("/var/run/crio/crio.sock", F_OK) != -1) {
+        return RUNTIME_CRIO;
+    }
+    return RUNTIME_UNKNOWN;
+}
+
+// 하나씩만 나옴
+int get_docker_pid(const char* container_name) {
+    char cmd[MAX_CMD_LEN];
+    char output[MAX_OUTPUT_LEN];
+    FILE *fp;
+
+    snprintf(cmd, sizeof(cmd), "docker inspect -f '{{.State.Pid}}' %s", container_name);
+    fp = popen(cmd, "r");
+    if (fp == NULL) {
+        perror("Failed to run docker command");
+        return -1;
+    }
+
+    if (fgets(output, sizeof(output), fp) == NULL) {
+        pclose(fp);
+        return -1;
+    }
+    pclose(fp);
+
+    return atoi(output);
+}
+
+// 여러개 가능, 수정 필요
+int get_containerd_pid(const char* container_label) {
+    char cmd[MAX_CMD_LEN];
+    char output[MAX_OUTPUT_LEN];
+    FILE *fp;
+
+    snprintf(cmd, sizeof(cmd), "ctr containers list | grep %s | awk '{print $1}'", container_label);
+    fp = popen(cmd, "r");
+    if (fp == NULL) {
+        perror("Failed to run ctr command");
+        return -1;
+    }
+
+    if (fgets(output, sizeof(output), fp) == NULL) {
+        pclose(fp);
+        return -1;
+    }
+    pclose(fp);
+
+    output[strcspn(output, "\n")] = 0;
+
+    snprintf(cmd, sizeof(cmd), "ctr task ls | grep %s | awk '{print $2}'", output);
+    fp = popen(cmd, "r");
+    if (fp == NULL) {
+        perror("Failed to run ctr task info command");
+        return -1;
+    }
+
+    int pid = -1;
+    if (fgets(output, sizeof(output), fp) != NULL) {  // Skip header
+        if (fgets(output, sizeof(output), fp) != NULL) {
+            sscanf(output, "%*s %d", &pid);
+        }
+    }
+
+    pclose(fp);
+    return pid;
+}
+
+// 여러개 가능
+int get_crio_pid(const char* container_name) {
+    char cmd[MAX_CMD_LEN];
+    char output[MAX_OUTPUT_LEN];
+    FILE *fp;
+
+    snprintf(cmd, sizeof(cmd), "crictl ps --name %s -q", container_name);
+    fp = popen(cmd, "r");
+    if (fp == NULL) {
+        perror("Failed to run crictl command");
+        return -1;
+    }
+
+    if (fgets(output, sizeof(output), fp) == NULL) {
+        pclose(fp);
+        return -1;
+    }
+    pclose(fp);
+    output[strcspn(output, "\n")] = 0;
+
+    snprintf(cmd, sizeof(cmd), "crictl inspect -f '{{.info.pid}} %s", output);
+    fp = popen(cmd, "r");
+    if (fp == NULL) {
+        perror("Failed to run crictl inspect command");
+        return -1;
+    }
+
+    if (fgets(output, sizeof(output), fp) == NULL) {
+        pclose(fp);
+        return -1;
+    }
+    pclose(fp);
+    output[strcspn(output, "\n")] = 0;
+
+    return atoi(output);
+}
+
+int get_container_pid(const char* container_name) {
+    ContainerRuntime runtime = detect_runtime();
+    
+    switch(runtime) {
+        case RUNTIME_DOCKER:
+            return get_docker_pid(container_name);
+        case RUNTIME_CONTAINERD:
+            return get_containerd_pid(container_name);
+        case RUNTIME_CRIO:
+            return get_crio_pid(container_name);
+        default:
+            fprintf(stderr, "Unknown or unsupported container runtime\n");
+            return -1;
+    }
+}
+
 int get_namespace_id(int container_pid) {
     
     // PID 네임스페이스 ID 찾기
@@ -81,7 +216,7 @@ int main(int argc, char **argv) {
 
     // main loop process from user's input
     while (1) {
-        char pid_str[256];
+        char container_str[256];
         char event_str[256];
         char ip_str[16];
         char action_str[10];
@@ -91,18 +226,19 @@ int main(int argc, char **argv) {
         __u32 event_id;
         __u32 action;
 
-        printf("Enter pid name to restrict (or 'quit' to exit): ");
-        if (fgets(pid_str, sizeof(pid_str), stdin) == NULL) {
+        printf("Enter container name to restrict (or 'quit' to exit): ");
+        if (fgets(container_str, sizeof(container_str), stdin) == NULL) {
             break;
         }
-        pid_str[strcspn(pid_str, "\n")] = 0;
+        container_str[strcspn(container_str, "\n")] = 0;
 
         // quit program
-        if (strcmp(pid_str, "quit") == 0) {
+        if (strcmp(container_str, "quit") == 0) {
             break;
         }
 
-        pid = (__u32)atoi(pid_str);
+        // pid = (__u32)atoi(pid_str);
+        pid = get_container_pid(container_str);
         ns_id = get_namespace_id(pid);
         
         printf("Enter event (e.g., task_fix_setuid, socket_connect): ");
@@ -119,7 +255,7 @@ int main(int argc, char **argv) {
                 continue;
             }
 
-            printf("Now restricting root access in pid: %s\n", pid_str);
+            printf("Now restricting root access in container: %s\n", container_str);
         } else if (strcmp(event_str, "socket_connect") == 0) {
             event_id = 1;
             printf("Enter IP to block or allow (e.g., 8.8.8.8): ");
@@ -159,7 +295,7 @@ int main(int argc, char **argv) {
                 continue;
             }
 
-            printf("Now restricting ip/port(%s) access in pid: %s\n", ip_str, pid_str);
+            printf("Now restricting ip/port(%s) access in container: %s\n", ip_str, container_str);
         }
     }
 

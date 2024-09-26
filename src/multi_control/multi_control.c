@@ -33,9 +33,9 @@ typedef enum {
 } ContainerRuntime;
 
 ContainerRuntime detect_runtime() {
-    if (access("/var/run/docker.sock", F_OK) != -1) {
+    if (access("/var/run/docker.sock1", F_OK) != -1) {
         return RUNTIME_DOCKER;
-    } else if (access("/run/containerd/containerd.sock", F_OK) != -1) {
+    } else if (access("/run/containerd/containerd.sock1", F_OK) != -1) {
         return RUNTIME_CONTAINERD;
     } else if (access("/var/run/crio/crio.sock", F_OK) != -1) {
         return RUNTIME_CRIO;
@@ -70,7 +70,7 @@ int get_containerd_pid(const char* container_name) {
     char output[MAX_OUTPUT_LEN];
     FILE *fp;
 
-    snprintf(cmd, sizeof(cmd), "ctr task ls | awk '$1 == \"%s\" {print $0}' | awk '{print $2}'", container_name);
+    snprintf(cmd, sizeof(cmd), "ctr task ls | awk '$1 == \"%s\" {print $2}'", container_name);
     fp = popen(cmd, "r");
     if (fp == NULL) {
         perror("Failed to run ctr task info command");
@@ -82,32 +82,17 @@ int get_containerd_pid(const char* container_name) {
     }
     pclose(fp);
     output[strcspn(output, "\n")] = 0;
-    printf("%s", output);
 
     return atoi(output);
 }
 
-// 여러개 가능, 현재는 name으로 찾지만 label, namespace, pods 구현 필요
+// 여러개 가능, 현재는 name인데 사실 pod임으로 찾지만 label, namespace 구현 필요
 int get_crio_pid(const char* container_name) {
     char cmd[MAX_CMD_LEN];
     char output[MAX_OUTPUT_LEN];
     FILE *fp;
 
-    snprintf(cmd, sizeof(cmd), "crictl ps --name %s | grep -E '^%s$' | awk '{print $1}'", container_name);
-    fp = popen(cmd, "r");
-    if (fp == NULL) {
-        perror("Failed to run crictl command");
-        return -1;
-    }
-
-    if (fgets(output, sizeof(output), fp) == NULL) {
-        pclose(fp);
-        return -1;
-    }
-    pclose(fp);
-    output[strcspn(output, "\n")] = 0;
-
-    snprintf(cmd, sizeof(cmd), "crictl inspect -f '{{.info.pid}} %s", output);
+    snprintf(cmd, sizeof(cmd), "crictl inspect $(crictl ps | grep \"\\b%s\\b\" | awk '{print $1}') 2>/dev/null | grep -Po '\"pid\":\\s*\\K[0-9]+'", container_name);
     fp = popen(cmd, "r");
     if (fp == NULL) {
         perror("Failed to run crictl inspect command");

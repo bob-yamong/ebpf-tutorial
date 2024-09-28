@@ -28,7 +28,7 @@ void print_info() {
 }
 
 static volatile bool exiting = false;
-static const char *ifname = "ens38";  // 인터페이스 이름, 입력 받거나 동적으로 가져오는 부분 추가 해야함 
+static const char *ifname = "ens33";  // 인터페이스 이름, 입력 받거나 동적으로 가져오는 부분 추가 해야함 
 
 static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args) {
     return vfprintf(stderr, format, args);

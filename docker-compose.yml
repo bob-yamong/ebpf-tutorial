@@ -1,0 +1,17 @@
+version: '3'
+
+services:
+  ubuntu1:
+    image: ubuntu:latest
+    container_name: ubuntu1
+    command: sh -c "while :; do sleep 3600; done"
+    
+  ubuntu2:
+    image: ubuntu:latest
+    container_name: ubuntu2
+    command: sh -c "while :; do sleep 3600; done"
+    
+  ubuntu3:
+    image: ubuntu:latest
+    container_name: ubuntu3
+    command: sh -c "while :; do sleep 3600; done"

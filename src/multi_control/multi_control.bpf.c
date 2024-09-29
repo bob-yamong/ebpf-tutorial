@@ -7,15 +7,15 @@
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u32);   // ns_id
-    __type(value, __u32);
+    __type(key, __u32);   // event_id
+    __type(value, __u32); // allow or block
     __uint(max_entries, 10240);
-} ns_id_map SEC(".maps");
+} event_mode_map SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, struct event_key);
-    __type(value, struct event_policy);
+    __type(value, __u32);   // action
     __uint(max_entries, 10240);
 } event_policy_map SEC(".maps");
 
@@ -25,16 +25,13 @@ struct event_key {
     char argument[256];
 };
 
-struct event_policy {
-    __u32 action;
-};
-
 char LICENSE[] SEC("license") = "GPL";
 
 SEC("lsm/task_fix_setuid")
 int BPF_PROG(prevent_root_setuid, struct cred *new, const struct cred *old, int flags) {
     __u32 ns_id, pid;
     __u32 new_uid, old_uid;
+    __u32 event_id = 0;
 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     ns_id = BPF_CORE_READ(task, nsproxy, pid_ns_for_children, ns.inum);
@@ -43,7 +40,13 @@ int BPF_PROG(prevent_root_setuid, struct cred *new, const struct cred *old, int 
     bpf_core_read(&new_uid, sizeof(new_uid), &new->uid.val);
     bpf_core_read(&old_uid, sizeof(old_uid), &old->uid.val);
 
-    __u32 *watched = bpf_map_lookup_elem(&ns_id_map, &ns_id);
+    struct event_key key = {
+        .ns_id = ns_id,
+        .event_id = event_id,
+        // argument is not used for this event, so we don't need to set it
+    };
+
+    __u32 *watched = bpf_map_lookup_elem(&event_policy_map, &key);
 
     bpf_printk("lsm/task_fix_setuid for ns_id %u, pid %u, new uid: %u, old uid: %u", ns_id, pid, new_uid, old_uid);
 
@@ -57,14 +60,12 @@ int BPF_PROG(prevent_root_setuid, struct cred *new, const struct cred *old, int 
 
 SEC("lsm/socket_connect")
 int BPF_PROG(prevent_socket_connect, struct socket *sock, struct sockaddr *address, int addrlen) {
-    __u32 ns_id, pid;
+    __u32 ns_id;
+    __u32 event_id = 1;
     struct event_key key = {0};
-    struct event_policy *policy;
 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     ns_id = BPF_CORE_READ(task, nsproxy, pid_ns_for_children, ns.inum);
-
-    pid = bpf_get_current_pid_tgid() >> 32;
 
     if (address->sa_family == AF_INET) {
         struct sockaddr_in *addr = (struct sockaddr_in *)address;
@@ -75,25 +76,29 @@ int BPF_PROG(prevent_socket_connect, struct socket *sock, struct sockaddr *addre
         bpf_probe_read(&dst_port, sizeof(dst_port), &addr->sin_port);
 
         key.ns_id = ns_id;
-        key.event_id = 1;
+        key.event_id = event_id;
         bpf_probe_read(&key.argument, sizeof(__be32), &dst_ip);
 
-        policy = bpf_map_lookup_elem(&event_policy_map, &key);
-        if (policy) {
-            if (policy->action == 0) {  // Allow
-                bpf_printk("Connection allowed to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
-                return 0;
-            } else if (policy->action == 1) {  // Block
-                bpf_printk("Connection blocked to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
+        __u32 *mode = bpf_map_lookup_elem(&event_mode_map, &event_id);
+        __u32 *policy = bpf_map_lookup_elem(&event_policy_map, &key);
+
+        if (mode) {
+            if (*mode == 0) {    // Allow
+                if (policy && *policy == 0) {  // ip in key
+                    bpf_printk("Connection allowed to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
+                    return 0;
+                }
+                bpf_printk("Connection blocked (not in allowlist) to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
                 return -1;
+            } else if (*mode == 1) { // Block
+                if (policy && *policy == 1) {  // ip in key
+                    bpf_printk("Connection allowed to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
+                    return -1;
+                }
+                bpf_printk("Connection allowed (not in blocklist) to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
+                return 0;
             }
-        } else {
-            // 정책이 없는 경우 허용
-            bpf_printk("No policy found for IP: %pI4 in ns_id %u, allowing connection\n", &dst_ip, ns_id);
-            return 0;
         }
     }
-
-    // IPv4가 아닌 경우 기본적으로 허용
     return 0;
 }

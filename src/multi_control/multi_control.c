@@ -18,10 +18,6 @@ struct event_key {
     char argument[256];
 };
 
-struct event_policy {
-    __u32 action;
-};
-
 #define MAX_CMD_LEN 1024
 #define MAX_OUTPUT_LEN 256
 
@@ -196,7 +192,6 @@ int main(int argc, char **argv) {
         char ip_str[16];
         char action_str[10];
         __u32 pid;
-        __u32 value;    // 무의미한 값
         __u32 ns_id;
         __u32 event_id;
         __u32 action;
@@ -239,7 +234,11 @@ int main(int argc, char **argv) {
 
         if (strcmp(event_str, "task_fix_setuid") == 0) {
             event_id = 0;
-            err = bpf_map__update_elem(skel->maps.ns_id_map, &ns_id, sizeof(ns_id), &value, sizeof(value), BPF_ANY);
+            struct event_key key = {
+                .ns_id = ns_id,
+                .event_id = event_id
+            };
+            err = bpf_map__update_elem(skel->maps.event_policy_map, &key, sizeof(key), &action, sizeof(action), BPF_ANY);
             if (err) {
                 fprintf(stderr, "Failed to update map: %d\n", err);
                 continue;
@@ -275,11 +274,32 @@ int main(int argc, char **argv) {
             };
             memcpy(key.argument, &ip_addr.s_addr, sizeof(ip_addr.s_addr));
 
-            struct event_policy policy = {
-                .action = action
-            };
+            __u32 current_action = 0;
+            err = bpf_map__lookup_elem(skel->maps.event_policy_map, &key, sizeof(key), &current_action, sizeof(current_action), 0);
+            if (err && err != -ENOENT) {
+                fprintf(stderr, "Failed to lookup current action: %d\n", err);
+                continue;
+            }
 
-            err = bpf_map__update_elem(skel->maps.event_policy_map, &key, sizeof(key), &policy, sizeof(policy), BPF_ANY);
+            if (current_action != action) {
+                // Delete all existing policies for this ns_id and event_id
+                struct event_key iter_key = {0};
+                struct event_key next_key = {0};
+                
+                while (bpf_map__get_next_key(skel->maps.event_policy_map, &iter_key, &next_key, sizeof(next_key)) == 0) {
+                    if (next_key.ns_id == ns_id && next_key.event_id == event_id) {
+                        bpf_map__delete_elem(skel->maps.event_policy_map, &next_key, sizeof(next_key), 0);
+                    }
+                    iter_key = next_key;
+                }
+                printf("Action changed or new policy created. All previous policies for this event_id have been cleared.\n");
+            }
+            err = bpf_map__update_elem(skel->maps.event_mode_map, &event_id, sizeof(event_id), &action, sizeof(action), BPF_ANY);
+            if (err) {
+                fprintf(stderr, "Failed to update map: %d\n", err);
+                continue;
+            }
+            err = bpf_map__update_elem(skel->maps.event_policy_map, &key, sizeof(key), &action, sizeof(action), BPF_ANY);
             if (err) {
                 fprintf(stderr, "Failed to update map: %d\n", err);
                 continue;

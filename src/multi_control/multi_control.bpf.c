@@ -5,6 +5,7 @@
 
 #define AF_INET 2
 
+char LICENSE[] SEC("license") = "GPL";
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u32);   // event_id
@@ -25,16 +26,31 @@ struct event_key {
     char argument[256];
 };
 
-char LICENSE[] SEC("license") = "GPL";
+static __always_inline __u64 get_cgroup_id() {
+    struct task_struct *cur_tsk = (struct task_struct *)bpf_get_current_task();
+    if (cur_tsk == NULL) {
+        bpf_printk("failed to get cur task\n");
+        return 0;
+    }
+
+    int cgrp_id = memory_cgrp_id;
+
+    __u64 cgroup_id = BPF_CORE_READ(cur_tsk, cgroups, subsys[cgrp_id], cgroup, kn, id);
+    bpf_printk("cgroup_id: %llu\n", cgroup_id);
+
+    return cgroup_id;
+}
+
 
 SEC("lsm/task_fix_setuid")
 int BPF_PROG(prevent_root_setuid, struct cred *new, const struct cred *old, int flags) {
-    __u32 ns_id, pid;
+    __u32 ns_id, pid, cgroup_id;
     __u32 new_uid, old_uid;
     __u32 event_id = 0;
 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     ns_id = BPF_CORE_READ(task, nsproxy, pid_ns_for_children, ns.inum);
+    cgroup_id = get_cgroup_id();
 
     pid = bpf_get_current_pid_tgid() >> 32;
     bpf_core_read(&new_uid, sizeof(new_uid), &new->uid.val);

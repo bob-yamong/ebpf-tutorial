@@ -33,9 +33,9 @@ static __always_inline __u64 get_cgroup_id() {
         return 0;
     }
 
-    int cgrp_id = memory_cgrp_id;
+    int mem_cgrp_id = memory_cgrp_id;
 
-    __u64 cgroup_id = BPF_CORE_READ(cur_tsk, cgroups, subsys[cgrp_id], cgroup, kn, id);
+    __u64 cgroup_id = BPF_CORE_READ(cur_tsk, cgroups, subsys[mem_cgrp_id], cgroup, kn, id);
     bpf_printk("cgroup_id: %llu\n", cgroup_id);
 
     return cgroup_id;

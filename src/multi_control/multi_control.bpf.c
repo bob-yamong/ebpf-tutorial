@@ -41,6 +41,28 @@ static __always_inline __u64 get_cgroup_id() {
     return cgroup_id;
 }
 
+static __always_inline int get_cgroup_name(char *buf, size_t sz) {
+    struct task_struct *cur_tsk = (struct task_struct *)bpf_get_current_task();
+    if (cur_tsk == NULL) {
+        bpf_printk("failed to get cur task\n");
+        return -1;
+    }
+
+    int cgrp_id = memory_cgrp_id;
+
+
+    // failed when use BPF_PROBE_READ
+    const char *name = BPF_CORE_READ(cur_tsk, cgroups, subsys[cgrp_id], cgroup, kn, name);
+    // bpf_printk("name: %s\n", name);
+    if (bpf_probe_read_kernel_str(buf, sz, name) < 0) {
+        bpf_printk("failed to get kernfs node name: %s\n", buf);
+        return -1;
+    }
+    bpf_printk("cgroup name: %s\n", buf);
+
+    return 0;
+}
+
 
 SEC("lsm/task_fix_setuid")
 int BPF_PROG(prevent_root_setuid, struct cred *new, const struct cred *old, int flags) {
@@ -51,6 +73,9 @@ int BPF_PROG(prevent_root_setuid, struct cred *new, const struct cred *old, int 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     ns_id = BPF_CORE_READ(task, nsproxy, pid_ns_for_children, ns.inum);
     cgroup_id = get_cgroup_id();
+
+    char cgroup_name[64];
+    get_cgroup_name(cgroup_name, sizeof(cgroup_name));
 
     pid = bpf_get_current_pid_tgid() >> 32;
     bpf_core_read(&new_uid, sizeof(new_uid), &new->uid.val);

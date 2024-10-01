@@ -1,29 +1,43 @@
+// syscall_monitor.c
+
 #include <stdio.h>
 #include <signal.h>
 #include <unistd.h>
+#include <stdarg.h> // va_list를 사용하기 위한 헤더 추가
 #include <bpf/libbpf.h>
 #include "syscall_monitor.skel.h"
 
 static volatile bool exiting = false;
 
+// libbpf 디버그 출력 함수 정의
+int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args) {
+    return vfprintf(stderr, format, args);
+}
+
 void handle_signal(int sig) {
     exiting = true;
 }
 
-void handle_event(void *ctx, int cpu, void *data, __u32 data_sz) {
+// eBPF 프로그램과 동일한 구조체 정의
+struct syscall_event {
+    __u32 pid;
+    __u32 syscall_nr;
+    __u64 args[6];
+};
+
+static int handle_event(void *ctx, void *data, size_t data_sz) {
     struct syscall_event *event = data;
     printf("PID %d: 시스템 콜 번호 %u 호출\n", event->pid, event->syscall_nr);
-    // 필요한 경우 인자 출력 등 추가 처리
-}
-
-void lost_event(void *ctx, int cpu, __u64 lost_cnt) {
-    fprintf(stderr, "이벤트 손실 발생: %llu개\n", lost_cnt);
+    return 0;
 }
 
 int main(int argc, char **argv) {
     struct syscall_monitor_bpf *skel;
-    struct perf_buffer *pb = NULL;
+    struct ring_buffer *rb = NULL;
     int err;
+
+    // libbpf 디버그 출력 활성화
+    libbpf_set_print(libbpf_print_fn);
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
@@ -38,29 +52,30 @@ int main(int argc, char **argv) {
     // eBPF 프로그램 어태치
     err = syscall_monitor_bpf__attach(skel);
     if (err) {
-        fprintf(stderr, "eBPF 프로그램 어태치 실패\n");
+        fprintf(stderr, "eBPF 프로그램 어태치 실패: %d\n", err);
         goto cleanup;
     }
 
-    // perf_buffer 설정
-    pb = perf_buffer__new(bpf_map__fd(skel->maps.events), 8, handle_event, lost_event, NULL, NULL);
-    if (!pb) {
-        fprintf(stderr, "perf_buffer 생성 실패\n");
+    // Ring Buffer 설정
+    rb = ring_buffer__new(bpf_map__fd(skel->maps.events), handle_event, NULL, NULL);
+    if (!rb) {
+        fprintf(stderr, "Ring Buffer 생성 실패\n");
+        err = 1;
         goto cleanup;
     }
 
     printf("시스템 콜 모니터링을 시작합니다...\n");
 
     while (!exiting) {
-        err = perf_buffer__poll(pb, 100);
+        err = ring_buffer__poll(rb, 100);
         if (err < 0 && err != -EINTR) {
-            fprintf(stderr, "perf_buffer__poll() 오류: %d\n", err);
+            fprintf(stderr, "ring_buffer__poll() 오류: %d\n", err);
             break;
         }
     }
 
 cleanup:
-    perf_buffer__free(pb);
+    ring_buffer__free(rb);
     syscall_monitor_bpf__destroy(skel);
     return err < 0 ? -err : 0;
 }

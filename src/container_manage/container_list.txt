@@ -298,5 +298,3 @@ many_ubuntu_00010
 many_ubuntu_00000
 many_ubuntu_00002
 many_ubuntu_00004
-phpldapadmin
-openldap

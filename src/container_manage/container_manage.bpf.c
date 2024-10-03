@@ -63,42 +63,6 @@ static __always_inline int get_cgroup_name(char *buf, size_t sz) {
     return 0;
 }
 
-
-SEC("lsm/task_fix_setuid")
-int BPF_PROG(prevent_root_setuid, struct cred *new, const struct cred *old, int flags) {
-    __u32 ns_id, pid, cgroup_id;
-    __u32 new_uid, old_uid;
-    __u32 event_id = 0;
-
-    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-    ns_id = BPF_CORE_READ(task, nsproxy, pid_ns_for_children, ns.inum);
-    cgroup_id = get_cgroup_id();
-
-    char cgroup_name[64];
-    get_cgroup_name(cgroup_name, sizeof(cgroup_name));
-
-    pid = bpf_get_current_pid_tgid() >> 32;
-    bpf_core_read(&new_uid, sizeof(new_uid), &new->uid.val);
-    bpf_core_read(&old_uid, sizeof(old_uid), &old->uid.val);
-
-    struct event_key key = {
-        .ns_id = ns_id,
-        .event_id = event_id,
-        // argument is not used for this event, so we don't need to set it
-    };
-
-    __u32 *watched = bpf_map_lookup_elem(&event_policy_map, &key);
-
-    bpf_printk("lsm/task_fix_setuid for ns_id %u, pid %u, new uid: %u, old uid: %u", ns_id, pid, new_uid, old_uid);
-
-    if (watched && new_uid == 0) {
-        bpf_printk("Prevented root escalation for watched ns_id %u", ns_id);
-        return -1;
-    }
-
-    return 0;
-}
-
 SEC("lsm/socket_connect")
 int BPF_PROG(prevent_socket_connect, struct socket *sock, struct sockaddr *address, int addrlen) {
     __u32 ns_id;

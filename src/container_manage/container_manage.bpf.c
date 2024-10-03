@@ -23,7 +23,7 @@ struct {
 struct event_key {
     __u32 ns_id;
     __u32 event_id;
-    char argument[256];
+    char argument[64];
 };
 
 static __always_inline __u64 get_cgroup_id() {
@@ -67,40 +67,59 @@ SEC("lsm/socket_connect")
 int BPF_PROG(prevent_socket_connect, struct socket *sock, struct sockaddr *address, int addrlen) {
     __u32 ns_id;
     __u32 event_id = 1;
-    struct event_key key = {0};
+    struct event_key key_src = {0};
+    struct event_key key_dst = {0};
 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     ns_id = BPF_CORE_READ(task, nsproxy, pid_ns_for_children, ns.inum);
 
     if (address->sa_family == AF_INET) {
+        // Destination IP and port (from address argument)
         struct sockaddr_in *addr = (struct sockaddr_in *)address;
         __be32 dst_ip;
         __be16 dst_port;
-
         bpf_probe_read(&dst_ip, sizeof(dst_ip), &addr->sin_addr.s_addr);
         bpf_probe_read(&dst_port, sizeof(dst_port), &addr->sin_port);
 
-        key.ns_id = ns_id;
-        key.event_id = event_id;
-        bpf_probe_read(&key.argument, sizeof(__be32), &dst_ip);
+        // Source IP and port (from socket structure)
+        if (sock) return 0;
+        struct sock *sk = sock->sk;
+        __be32 src_ip = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
+        __be16 src_port = BPF_CORE_READ(sk, __sk_common.skc_num);
 
+        // Add src_ip and dst_ip to event_key for checking policies
+        key_dst.ns_id = ns_id;
+        key_dst.event_id = event_id;
+        bpf_probe_read(&key_dst.argument, sizeof(__be32), &dst_ip);  // Storing destination IP in argument field
+
+        key_src.ns_id = ns_id;
+        key_src.event_id = event_id;
+        bpf_probe_read(&key_src.argument, sizeof(__be32), &src_ip);  // Storing source IP in argument field
+
+        // Map lookup for event mode and policy for src and dst
         __u32 *mode = bpf_map_lookup_elem(&event_mode_map, &event_id);
-        __u32 *policy = bpf_map_lookup_elem(&event_policy_map, &key);
+        __u32 *policy_src = bpf_map_lookup_elem(&event_policy_map, &key_src);
+        __u32 *policy_dst = bpf_map_lookup_elem(&event_policy_map, &key_dst);
 
+        // Check if the mode is set
         if (mode) {
-            if (*mode == 0) {    // Allow
-                if (policy && *policy == 0) {  // ip in key
-                    bpf_printk("Connection allowed to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
+            if (*mode == 0) {    // Allow mode
+                // Check if the source or destination IP matches the allowlist
+                if ((policy_src && *policy_src == 0) || (policy_dst && *policy_dst == 0)) {
+                    bpf_printk("Connection allowed to IP: %pI4 from IP: %pI4 for ns_id %u\n", &dst_ip, &src_ip, ns_id);
                     return 0;
                 }
-                bpf_printk("Connection blocked (not in allowlist) to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
+                // If not in allowlist, block
+                bpf_printk("Connection blocked (not in allowlist) to IP: %pI4 from IP: %pI4 for ns_id %u\n", &dst_ip, &src_ip, ns_id);
                 return -1;
-            } else if (*mode == 1) { // Block
-                if (policy && *policy == 1) {  // ip in key
-                    bpf_printk("Connection allowed to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
+            } else if (*mode == 1) { // Block mode
+                // Check if the source or destination IP matches the blocklist
+                if ((policy_src && *policy_src == 1) || (policy_dst && *policy_dst == 1)) {
+                    bpf_printk("Connection blocked to IP: %pI4 from IP: %pI4 for ns_id %u\n", &dst_ip, &src_ip, ns_id);
                     return -1;
                 }
-                bpf_printk("Connection allowed (not in blocklist) to IP: %pI4 for ns_id %u\n", &dst_ip, ns_id);
+                // If not in blocklist, allow
+                bpf_printk("Connection allowed (not in blocklist) to IP: %pI4 from IP: %pI4 for ns_id %u\n", &dst_ip, &src_ip, ns_id);
                 return 0;
             }
         }

@@ -15,7 +15,7 @@
 struct event_key {
     __u32 ns_id;
     __u32 event_id;
-    char argument[256];
+    char argument[64];
 };
 
 #define MAX_CMD_LEN 1024
@@ -107,52 +107,63 @@ int main(int argc, char **argv) {
     __u32 action;
 
 
-    printf("Enter IP to block or allow (e.g., 8.8.8.8): ");
-
+    do {
+        printf("Enter IP to block or allow (e.g., 8.8.8.8): ");
     
-    action = 1;
+        action = 1;
         
-    fgets(ip_str, sizeof(ip_str), stdin);
-    ip_str[strcspn(ip_str, "\n")] = 0;
+        fgets(ip_str, sizeof(ip_str), stdin);
+        ip_str[strcspn(ip_str, "\n")] = 0;
 
-    struct in_addr ip_addr;
-    if (inet_pton(AF_INET, ip_str, &ip_addr) != 1) {
-        fprintf(stderr, "ERROR: Invalid IP address\n");
-    }
-
-    FILE *file = fopen("container_list.txt", "r");
-    if (file == NULL) {
-        perror("Error opening file");
-        return EXIT_FAILURE;
-    }
-
-    char line[256]; // Buffer to hold each line
-    while (fgets(line, sizeof(line), file)) {
-        printf("%s", line); // Print each line
-        pid = get_docker_pid(line);
-        ns_id = get_namespace_id(pid);
-        event_id = 1;
-
-        struct event_key key = {
-            .ns_id = ns_id,
-            .event_id = event_id
-        };
-        memcpy(key.argument, &ip_addr.s_addr, sizeof(ip_addr.s_addr));
-
-        err = bpf_map__update_elem(skel->maps.event_mode_map, &event_id, sizeof(event_id), &action, sizeof(action), BPF_ANY);
-        if (err) {
-            fprintf(stderr, "Failed to update map: %d\n", err);
-            continue;
+        struct in_addr ip_addr;
+        if (inet_pton(AF_INET, ip_str, &ip_addr) != 1) {
+            fprintf(stderr, "ERROR: Invalid IP address\n");
         }
-        err = bpf_map__update_elem(skel->maps.event_policy_map, &key, sizeof(key), &action, sizeof(action), BPF_ANY);
-        if (err) {
-            fprintf(stderr, "Failed to update map: %d\n", err);
-            continue;
-        }
-        
-    }
 
-    fclose(file);
+        FILE *file = fopen("container_list.txt", "r");
+        if (file == NULL) {
+            perror("Error opening file");
+            return EXIT_FAILURE;
+        }
+
+        char line[256]; // Buffer to hold each line
+        while (fgets(line, sizeof(line), file)) {
+            printf("%s", line); // Print each line
+            pid = get_docker_pid(line);
+            ns_id = get_namespace_id(pid);
+            event_id = 1;
+
+            struct event_key key = {
+                .ns_id = ns_id,
+                .event_id = event_id
+            };
+            memcpy(key.argument, &ip_addr.s_addr, sizeof(ip_addr.s_addr));
+
+            err = bpf_map__update_elem(skel->maps.event_mode_map, &event_id, sizeof(event_id), &action, sizeof(action), BPF_ANY);
+            if (err) {
+                fprintf(stderr, "Failed to update map: %d\n", err);
+                continue;
+            }
+            err = bpf_map__update_elem(skel->maps.event_policy_map, &key, sizeof(key), &action, sizeof(action), BPF_ANY);
+            if (err) {
+                fprintf(stderr, "Failed to update map: %d\n", err);
+                continue;
+            }
+            
+        }
+
+        fclose(file);
+
+        while(1){
+            char a = getchar();
+            if (a == 'e') exit(0);
+            if (a == 'n'){
+                fflush(stdin);
+                while (getchar() != '\n') continue;
+                break;
+            }
+        }
+    } while(1);
 
 
 cleanup:

@@ -81,31 +81,32 @@ int BPF_PROG(prevent_socket_connect, struct socket *sock, struct sockaddr *addre
         bpf_probe_read(&dst_ip, sizeof(dst_ip), &addr->sin_addr.s_addr);
         bpf_probe_read(&dst_port, sizeof(dst_port), &addr->sin_port);
 
-        // Source IP and port (from socket structure)
-        if (sock) return 0;
-        struct sock *sk = sock->sk;
-        __be32 src_ip = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
-        __be16 src_port = BPF_CORE_READ(sk, __sk_common.skc_num);
+        // // Source IP and port (from socket structure)
+        // if (sock) return 0;
+        // struct sock *sk = sock->sk;
+        // __be32 src_ip = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
+        // __be16 src_port = BPF_CORE_READ(sk, __sk_common.skc_num);
 
         // Add src_ip and dst_ip to event_key for checking policies
         key_dst.ns_id = ns_id;
         key_dst.event_id = event_id;
         bpf_probe_read(&key_dst.argument, sizeof(__be32), &dst_ip);  // Storing destination IP in argument field
 
-        key_src.ns_id = ns_id;
-        key_src.event_id = event_id;
-        bpf_probe_read(&key_src.argument, sizeof(__be32), &src_ip);  // Storing source IP in argument field
+        // key_src.ns_id = ns_id;
+        // key_src.event_id = event_id;
+        // bpf_probe_read(&key_src.argument, sizeof(__be32), &src_ip);  // Storing source IP in argument field
 
         // Map lookup for event mode and policy for src and dst
         __u32 *mode = bpf_map_lookup_elem(&event_mode_map, &event_id);
-        __u32 *policy_src = bpf_map_lookup_elem(&event_policy_map, &key_src);
+        // __u32 *policy_src = bpf_map_lookup_elem(&event_policy_map, &key_src);
         __u32 *policy_dst = bpf_map_lookup_elem(&event_policy_map, &key_dst);
 
         // Check if the mode is set
         if (mode) {
             if (*mode == 0) {    // Allow mode
                 // Check if the source or destination IP matches the allowlist
-                if ((policy_src && *policy_src == 0) || (policy_dst && *policy_dst == 0)) {
+                // if ((policy_src && *policy_src == 0) || (policy_dst && *policy_dst == 0)) {
+                if (policy_dst && *policy_dst == 0) {
                     bpf_printk("Connection allowed to IP: %pI4 from IP: %pI4 for ns_id %u\n", &dst_ip, &src_ip, ns_id);
                     return 0;
                 }
@@ -114,7 +115,8 @@ int BPF_PROG(prevent_socket_connect, struct socket *sock, struct sockaddr *addre
                 return -1;
             } else if (*mode == 1) { // Block mode
                 // Check if the source or destination IP matches the blocklist
-                if ((policy_src && *policy_src == 1) || (policy_dst && *policy_dst == 1)) {
+                // if ((policy_src && *policy_src == 1) || (policy_dst && *policy_dst == 1)) {
+                if (policy_dst && *policy_dst == 1) {
                     bpf_printk("Connection blocked to IP: %pI4 from IP: %pI4 for ns_id %u\n", &dst_ip, &src_ip, ns_id);
                     return -1;
                 }

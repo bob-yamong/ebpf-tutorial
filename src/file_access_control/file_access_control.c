@@ -16,7 +16,6 @@
 
 struct key_t {
     __u32 ns_id;
-    __u64 cgroup_id;
     char filename[MAX_PATH_LEN];
 };
 
@@ -137,14 +136,16 @@ int get_container_pid(const char* container_name) {
     }
 }
 
-__u32 get_namespace_id(int container_pid) {
+int get_namespace_id(int container_pid) {
+    
+    // PID 네임스페이스 ID 찾기
     char path[MAX_PATH_LEN];
     snprintf(path, sizeof(path), "/proc/%d/ns/pid", container_pid);
     
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
         perror("Failed to open namespace file");
-        return 0;
+        return 1;
     }
 
     char link_target[MAX_PATH_LEN];
@@ -152,7 +153,7 @@ __u32 get_namespace_id(int container_pid) {
     if (len < 0) {
         perror("Failed to read link");
         close(fd);
-        return 0;
+        return 1;
     }
     link_target[len] = '\0';
 
@@ -160,93 +161,58 @@ __u32 get_namespace_id(int container_pid) {
     if (sscanf(link_target, "pid:[%u]", &ns_id) != 1) {
         fprintf(stderr, "Failed to parse namespace ID\n");
         close(fd);
-        return 0;
+        return 1;
     }
+
+    printf("PID namespace ID for PID %d: %u\n", container_pid, ns_id);
 
     close(fd);
-    return (__u32)ns_id;
+    return ns_id;
 }
 
-__u64 get_cgroup_id(int container_pid) {
-    char path[MAX_PATH_LEN];
-    snprintf(path, sizeof(path), "/proc/%d/cgroup", container_pid);
-    
-    FILE *f = fopen(path, "r");
-    if (!f) {
-        perror("Failed to open cgroup file");
-        return 0;
-    }
-
-    char line[256];
-    __u64 cgroup_id = 0;
-    while (fgets(line, sizeof(line), f)) {
-        if (sscanf(line, "0::/kubepods/%*[^/]/%llu", &cgroup_id) == 1) {
-            break;
-        }
-    }
-
-    fclose(f);
-    return cgroup_id;
-}
-
-int block_file(int map_fd, const char *container_name, const char *filename)
-{
+int block_file(int map_fd, const char *container_name, const char *filename) {
     struct key_t host_key = {};
     struct key_t container_key = {};
-    struct key_t relative_key = {};
     __u8 value = 1;
 
+    // Get container's PID
     int container_pid = get_container_pid(container_name);
     if (container_pid < 0) {
-        fprintf(stderr, "Failed to get container PID\n");
+        fprintf(stderr, "Failed to get container PID for %s\n", container_name);
         return -1;
     }
 
-    host_key.ns_id = container_key.ns_id = relative_key.ns_id = get_namespace_id(container_pid);
-    host_key.cgroup_id = container_key.cgroup_id = relative_key.cgroup_id = get_cgroup_id(container_pid);
-    
-    // Host full path
+    // Get namespace ID and cgroup ID for the container
+    host_key.ns_id = container_key.ns_id = get_namespace_id(container_pid);
+
+    printf("Debug: Container %s, PID: %d, NS ID: %u\n",
+           container_name, container_pid, host_key.ns_id);
+
+    // Host full path (prepend the root of the container)
     char proc_root[MAX_PATH_LEN];
     snprintf(proc_root, sizeof(proc_root), "/proc/%d/root", container_pid);
     snprintf(host_key.filename, sizeof(host_key.filename), "%s%s", proc_root, filename);
 
-    // Container internal absolute path
+    // Container internal path (just the file name inside the container)
     strncpy(container_key.filename, filename, sizeof(container_key.filename) - 1);
     container_key.filename[sizeof(container_key.filename) - 1] = '\0';
 
-    // Relative path
-    const char *last_slash = strrchr(filename, '/');
-    if (last_slash) {
-        strncpy(relative_key.filename, last_slash + 1, sizeof(relative_key.filename) - 1);
-    } else {
-        strncpy(relative_key.filename, filename, sizeof(relative_key.filename) - 1);
-    }
-    relative_key.filename[sizeof(relative_key.filename) - 1] = '\0';
-
-    // Add host full path
+    // Update host path and container path in the BPF map
     if (bpf_map_update_elem(map_fd, &host_key, &value, BPF_ANY)) {
         perror("bpf_map_update_elem (host path)");
         return -1;
     }
-
-    // Add container internal absolute path
     if (bpf_map_update_elem(map_fd, &container_key, &value, BPF_ANY)) {
         perror("bpf_map_update_elem (container path)");
-        return -1;
-    }
-
-    // Add relative path
-    if (bpf_map_update_elem(map_fd, &relative_key, &value, BPF_ANY)) {
-        perror("bpf_map_update_elem (relative path)");
         return -1;
     }
 
     printf("Blocked access to file:\n");
     printf("  Host path: %s\n", host_key.filename);
     printf("  Container path: %s\n", container_key.filename);
-    printf("  Relative path: %s\n", relative_key.filename);
-    printf("In container: %s (NS ID: %u, Cgroup ID: %llu)\n", 
-           container_name, host_key.ns_id, host_key.cgroup_id);
+    printf("In container: %s (NS ID: %u)\n",
+           container_name, host_key.ns_id);
+
     return 0;
 }
 
@@ -262,7 +228,6 @@ int unblock_file(int map_fd, const char *container_name, const char *filename)
     }
 
     key.ns_id = get_namespace_id(container_pid);
-    key.cgroup_id = get_cgroup_id(container_pid);
     
     // 컨테이너의 루트 디렉토리 경로 구성
     char container_root[MAX_PATH_LEN];
@@ -281,12 +246,12 @@ int unblock_file(int map_fd, const char *container_name, const char *filename)
 
     int result = bpf_map_delete_elem(map_fd, &key);
     if (result == 0) {
-        printf("Unblocked access to file: %s in container: %s (NS ID: %u, Cgroup ID: %llu)\n", 
-               key.filename, container_name, key.ns_id, key.cgroup_id);
+        printf("Unblocked access to file: %s in container: %s (NS ID: %u)\n", 
+               key.filename, container_name, key.ns_id);
         return 0;
     } else if (result == -ENOENT) {
-        printf("File was not blocked: %s in container: %s (NS ID: %u, Cgroup ID: %llu)\n", 
-               key.filename, container_name, key.ns_id, key.cgroup_id);
+        printf("File was not blocked: %s in container: %s (NS ID: %u)\n", 
+               key.filename, container_name, key.ns_id);
         return 0;
     } else {
         perror("bpf_map_delete_elem");
@@ -303,8 +268,8 @@ void print_blocked_files(int map_fd)
     
     while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
         if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
-            printf("File: %s, NS ID: %u, Cgroup ID: %llu\n", 
-                   next_key.filename, next_key.ns_id, next_key.cgroup_id);
+            printf("File: %s, NS ID: %u\n", 
+                   next_key.filename, next_key.ns_id);
         }
         key = next_key;
     }

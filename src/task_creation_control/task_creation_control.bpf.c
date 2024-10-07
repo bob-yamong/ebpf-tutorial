@@ -39,17 +39,17 @@ int BPF_PROG(task_alloc, struct task_struct *task, unsigned long clone_flags)
     u64 cgroup_id = cgroup_id = get_cgroup_id();
 
     if (blocked && *blocked == 1) {
-        bpf_printk("Task creation blocked for parent PID %d(%d), NS: %lld, CGroup ID: %llu", ppid, pid, ns, cgroup_id);
+        bpf_printk("Task creation blocked for CGroup ID: %llu, parent PID %d(%d), NS: %llu", cgroup_id, ppid, pid, ns);
         return -1;
     }
 
     blocked = bpf_map_lookup_elem(&blocked_pids, &pid);
     if (blocked && *blocked == 1) {
-        bpf_printk("Task creation blocked for parent PID %d(%d), NS: %lld, CGroup ID: %llu", ppid, pid, ns, cgroup_id);
+        bpf_printk("Task creation blocked for CGroup ID: %llu, parent PID %d(%d), NS: %llu", cgroup_id, ppid, pid, ns);
         return -1;
     }
 
-    bpf_printk("Task creation allowed for parent PID %d(%d), NS: %lld, CGroup ID: %llu", ppid, pid, ns, cgroup_id);
+    bpf_printk("Task creation allowed for CGroup ID: %llu, parent PID %d(%d), NS: %llu", cgroup_id, ppid, pid, ns);
     return 0;
 }
 

@@ -11,9 +11,6 @@
 #define MAX_PERMISSIONS 5
 
 struct cgroup_permissions {
-    __u8 sudo;
-    __u8 read;
-    __u8 write;
     __u8 socket_create;
     __u8 execute;
 };
@@ -52,12 +49,6 @@ void input_group_policy(__u32 *group_id, struct group_policy *policy) {
         if (policy->cgroup_ids[i] == 0) break;
 
         printf("Enter permissions for cgroup %llu (1 for yes, 0 for no):\n", policy->cgroup_ids[i]);
-        printf("Sudo: ");
-        scanf("%hhu", &policy->permissions[i].sudo);
-        printf("Read: ");
-        scanf("%hhu", &policy->permissions[i].read);
-        printf("Write: ");
-        scanf("%hhu", &policy->permissions[i].write);
         printf("Socket Create: ");
         scanf("%hhu", &policy->permissions[i].socket_create);
         printf("Execute: ");

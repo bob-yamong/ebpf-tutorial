@@ -16,9 +16,6 @@ struct {
 } user_group_map SEC(".maps");
 
 struct cgroup_permissions {
-    __u8 sudo;
-    __u8 read;
-    __u8 write;
     __u8 socket_create;
     __u8 execute;
 };
@@ -71,7 +68,7 @@ int BPF_PROG(socket_connect, struct socket *sock, struct sockaddr *address, int 
         return 0;
     }
 
-    if(event->cgroup_id != 11986) {
+    if(event->cgroup_id != 43659 || event->cgroup_id != 43859) {
         bpf_ringbuf_discard(event, 0);
         return 0;
     }
@@ -130,7 +127,7 @@ int BPF_PROG(bprm_check_security, struct linux_binprm *bprm)
         return 0;
     }
 
-    if(event->cgroup_id != 11986) {
+    if(event->cgroup_id != 43659 || event->cgroup_id != 43859) {
         bpf_ringbuf_discard(event, 0);
         return 0;
     }
@@ -153,7 +150,7 @@ int BPF_PROG(bprm_check_security, struct linux_binprm *bprm)
             if (policy->cgroup_ids[j] == cgroup_id) {
                 // cgroup_id에 대한 권한이 있음
                 // sudo 권한 확인
-                if (policy->permissions[j].sudo) {
+                if (policy->permissions[j].execute) {
                     event->action = 1;  // 허용
                     bpf_ringbuf_submit(event, 0);
                     return 0;  // 권한 있음, 실행 허용

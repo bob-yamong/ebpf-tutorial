@@ -68,10 +68,10 @@ int BPF_PROG(socket_connect, struct socket *sock, struct sockaddr *address, int 
         return 0;
     }
 
-    if(event->cgroup_id != 43659 || event->cgroup_id != 43859) {
-        bpf_ringbuf_discard(event, 0);
-        return 0;
-    }
+    // if(event->cgroup_id != 12581 || event->cgroup_id != 13507) {
+    //     bpf_ringbuf_discard(event, 0);
+    //     return 0;
+    // }
 
     // 사용자의 각 그룹에 대해 권한 확인
     #pragma unroll
@@ -127,10 +127,10 @@ int BPF_PROG(bprm_check_security, struct linux_binprm *bprm)
         return 0;
     }
 
-    if(event->cgroup_id != 43659 || event->cgroup_id != 43859) {
-        bpf_ringbuf_discard(event, 0);
-        return 0;
-    }
+    // if(event->cgroup_id != 12581 || event->cgroup_id != 13507) {
+    //     bpf_ringbuf_discard(event, 0);
+    //     return 0;
+    // }
 
     // 사용자의 각 그룹에 대해 권한 확인
     #pragma unroll
